@@ -24,9 +24,12 @@ cd covid-model
 jupyter notebook
 ```
 
-If you have jupyter notebook installed your browser window should open. View the `SIRD_model.ipynb` notebook to view the results and play with the code. In case of any issed/suggestions please consider opening an issue or a pull request. 
+If you have jupyter notebook installed your browser window should open. View the `SIRD_model.ipynb` notebook to view the results and play with the code. In case of any issues/suggestions please consider opening an issue or a pull request. 
 
 ## Maintainers
 
 - [anag004](github.com/anag004/)
 - [tyagiutkarsh](github.com/tyagiutkarsh/)
+
+## License
+See the [LICENSE](https://github.com/anag004/covid-model/blob/master/LICENSE.md) file for license rights and limitations (MIT).
