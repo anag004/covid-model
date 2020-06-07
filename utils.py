@@ -16,6 +16,9 @@ from scipy.signal import savgol_filter
 from scipy.special import expit
 from scipy.integrate import solve_ivp
 from itertools import product
+import tqdm
+import os
+from pathlib import Path
 
 class DataFetcher:
     """
@@ -216,7 +219,7 @@ def get_model_stats(model, loss_fun, data, breakpoints, plot_title, bounds, para
         row_num = ceil(len(breakpoints) / col_num)
         fig, axs = plt.subplots(row_num, col_num, figsize=(15, 4 * row_num), sharex=True, sharey=True)
     
-    for b, ax in zip(breakpoints, axs.flat):
+    for b, ax in tqdm.tqdm(zip(breakpoints, axs.flat)):
         params = fit_model(model, loss_fun, data[:b], bounds=bounds, verbose=True)
         offset = int(params[0])
         
@@ -226,7 +229,7 @@ def get_model_stats(model, loss_fun, data, breakpoints, plot_title, bounds, para
         ax.scatter(time_values[:b], data[:b], s=2, c='green', label="Used points")
         ax.scatter(time_values[b:], data[b:], s=2, c='red', label="Unused points")
         ax.axvspan(b, time_values[-1], facecolor='r', alpha=0.2)
-        ax.set_title("NYC | {} days".format(b))
+        ax.set_title("{} days".format(b))
         ax.set_xlabel("Days")
         ax.set_ylabel("Deaths")
         ax.legend()
@@ -323,29 +326,31 @@ def sird_sd(t_max, offset, pop,  I_init, T_inf, gamma_x, R_max, R_min, sd_offset
     result[1:] = np.diff(result)
     return result * pop
 
-def get_model_stats_v2(model, loss_fun, data, breakpoints, plot_title, 
-                       fixed_params, var_param_vals, param_order, loss_factor, future_preds=0, huge=False):
+def get_model_stats_v2(model, loss_fun, data, breakpoints,  
+                       fixed_params, var_param_vals, param_order, loss_factor, future_preds=0, huge=False, plot_title=None, filename=None, exclude_params=None):
     
     """ 
-    Newer version of get_model_stats, includes uncertainty analysis. Fits a given model and plots results.
+    Newer version of get_model_stats, includes uncertainty analysis. Fits a given model, plots and saves projections.
 
     Arguments
     -------------
-    model          : Callable function of the form f(t_max, *params) where params are the model parameters. Function should return predictions in an array.
-    loss_fun       : Function of form f(x, y) which returns the loss between vectors x, y
-    data           : An array containing the daily death counts
-    breakpoints    : An array of time values at which the data should be split into train/test sets. A plot is produced for each breakpoint
-    plot_title     : Doesn't do anything. Included for compatibility reasons. 
-    fixed_params   : A dictionary with string keys and float values mapping parameter names to their fixed values. 
-    var_param_vals : A dictionary with string keys and list values mapping variable parameter names to their possible values.  
-    param_order    : A list of string names of parameters specifying the order in which they are passed into the model function
-    loss_factor    : Controls the size of the uncertainty interval. Corresponds to `\alpha`in the whitepaper
-    future_preds   : The number of days into the future the model should predict deaths
-    huge           : If this is True large plots are produced
+    model           : Callable function of the form f(t_max, *params) where params are the model parameters. Function should return predictions in an array.
+    loss_fun        : Function of form f(x, y) which returns the loss between vectors x, y
+    data            : An array containing the daily death counts
+    breakpoints     : An array of time values at which the data should be split into train/test sets. A plot is produced for each breakpoint
+    plot_title      : The title of the set of plots. If left empty, nothing is plotted
+    filename        : The path where the predictions should be stored in JSON format. If unspecified, predictions are not stored.
+    fixed_params    : A dictionary with string keys and float values mapping parameter names to their fixed values. 
+    var_param_vals  : A dictionary with string keys and list values mapping variable parameter names to their possible values.  
+    param_order     : A list of string names of parameters specifying the order in which they are passed into the model function
+    loss_factor     : Controls the size of the uncertainty interval. Corresponds to `\alpha` in the whitepaper
+    future_preds    : The number of days into the future the model should predict deaths
+    huge            : If this is True large plots are produced
+    exclude_params  : List of params which should not be saved
 
     Returns
     -------------
-    A pandas DataFrame with the inferred model parameters. Additionally, this function plots the predictions with uncertainty intervals
+    A pandas DataFrame with the inferred model parameters and projections. 
     """
 
 
@@ -361,16 +366,21 @@ def get_model_stats_v2(model, loss_fun, data, breakpoints, plot_title,
     col_num = 3
     row_num = ceil(len(breakpoints) / col_num)
     
-    if not huge:
-        fig, axs = plt.subplots(row_num, col_num, figsize=(15, 4 * row_num), sharex=True, sharey=True)
+    if plot_title is not None:
+        if not huge:
+            fig, axs = plt.subplots(row_num, col_num, figsize=(15, 4 * row_num), sharex=True, sharey=True)
+        else:
+            col_num = 2
+            row_num = ceil(len(breakpoints) / col_num)
+            fig, axs = plt.subplots(ceil(len(breakpoints) / 2), 2, figsize=(15, 8 * row_num), sharex=True, sharey=True)
+
+        loop_iterator = zip(breakpoints, axs.flat)
     else:
-        col_num = 2
-        row_num = ceil(len(breakpoints) / col_num)
-        fig, axs = plt.subplots(ceil(len(breakpoints) / 2), 2, figsize=(15, 8 * row_num), sharex=True, sharey=True)
+        loop_iterator = zip(breakpoints, range(len(breakpoints)))
         
     var_param_list = list(var_param_vals.keys())
     
-    for b, ax in zip(breakpoints, axs.flat):
+    for b, ax in tqdm.tqdm(loop_iterator):
         min_loss = np.inf
         best_preds = None
         best_offset = None
@@ -403,39 +413,65 @@ def get_model_stats_v2(model, loss_fun, data, breakpoints, plot_title,
                 best_params = params
             
             all_preds.append((loss, preds, offset))
-  
-        
-        ax.scatter(time_values[:b], data[:b], s=2, c='green', label="Used points")
-        ax.scatter(time_values[b:], data[b:], s=2, c='red', label="Unused points")
-        ax.axvspan(b, time_values[-1], facecolor='r', alpha=0.2)
-        
+
+
+        # Get the uncertainty interval 
         min_preds = np.ones_like(best_preds) * np.inf
         max_preds = np.ones_like(best_preds) * -np.inf
-        
-        # Plot the uncertainty
+
         for loss, preds, offset in all_preds:
             if min_loss + loss_factor / (b - offset) >= loss:
                 min_preds = np.minimum(min_preds, preds)
                 max_preds = np.maximum(max_preds, preds)
 
-        ax.plot(best_offset + np.arange(best_preds.shape[0]), 0.5 * (min_preds + max_preds), label="Projected deaths")
-        ax.fill_between(best_offset + np.arange(best_preds.shape[0]), min_preds, max_preds, alpha=0.2)
-        ax.set_title("{} days".format(b))
-        ax.set_xlabel("Days")
-        ax.set_ylabel("Deaths")
-        ax.legend()
+        avg_preds = 0.5 * (min_preds + max_preds)
+  
+        if plot_title is not None:
+            ax.scatter(time_values[:b], data[:b], s=2, c='green', label="Used points")
+            ax.scatter(time_values[b:], data[b:], s=2, c='red', label="Unused points")
+            ax.axvspan(b, time_values[-1], facecolor='r', alpha=0.2)
+
+            ax.plot(best_offset + np.arange(best_preds.shape[0]), avg_preds, label="Projected deaths")
+            ax.fill_between(best_offset + np.arange(best_preds.shape[0]), min_preds, max_preds, alpha=0.2)
+            ax.set_title("{} days".format(b))
+            ax.set_xlabel("Days")
+            ax.set_ylabel("Deaths")
+            ax.legend()
         
-        df_dict = {
-            "Breakpoint": [b],
-            "Train Loss"      : [min_loss],
-        }
+        if filename is not None:
+            df_dict = {
+                "Breakpoint"  : [b],
+                "Train Loss"  : [min_loss],
+                "preds"       : [avg_preds],
+                "minpreds"    : [min_preds],
+                "maxpreds"    : [max_preds]
+            }
+        else:
+            df_dict = {
+                "Breakpoint"  : [b],
+                "Train Loss"  : [min_loss],
+                "preds"       : [avg_preds],
+            }
 
         for i, col in enumerate(param_order):
-            df_dict[col] = [best_params[i]]
+            if exclude_params is None or col not in exclude_params: 
+                df_dict[col] = [best_params[i]]
 
         df = df.append(pd.DataFrame(df_dict))
+
+    if plot_title is not None:
+        fig.tight_layout(pad=2.0)
+        fig.suptitle(plot_title)
     
-    fig.tight_layout(pad=2.0)
+    if filename is not None:
+        directory = os.path.dirname(filename)
+        Path(directory).mkdir(exist_ok=True, parents=True)
+        df.reset_index(inplace=True)
+        json_data = df.to_json()
+
+        with open(filename, "w") as f:
+            f.write(json_data)
+
     return df
 
 def R_sd_v2(t, R_max, R_min, sd_offset, sd_metric, offset):    
