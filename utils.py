@@ -454,7 +454,7 @@ def get_model_stats_v2(model, loss_fun, data, raw_data, breakpoints,
         if base_filename is not None:
             # Append the date of the breakpoint to the filename
             curr_date = start_date + datetime.timedelta(days=b)
-            projections_df.to_csv("projections/{}_{}.csv".format(base_filename, curr_date.strftime(date_format)))
+            projections_df.to_csv("projections/{}_{}.csv".format(base_filename, b))
 
         df_dict = {
             "Breakpoint"  : [b],
