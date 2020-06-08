@@ -19,6 +19,7 @@ from itertools import product
 import tqdm
 import os
 from pathlib import Path
+import datetime
 
 class DataFetcher:
     """
@@ -326,8 +327,9 @@ def sird_sd(t_max, offset, pop,  I_init, T_inf, gamma_x, R_max, R_min, sd_offset
     result[1:] = np.diff(result)
     return result * pop
 
-def get_model_stats_v2(model, loss_fun, data, breakpoints,  
-                       fixed_params, var_param_vals, param_order, loss_factor, future_preds=0, huge=False, plot_title=None, filename=None, exclude_params=None):
+def get_model_stats_v2(model, loss_fun, data, raw_data, breakpoints,  
+                       fixed_params, var_param_vals, param_order, loss_factor, start_date, 
+                       future_preds=0, huge=False, plot_title=None, base_filename=None, exclude_params=None, date_format="%d-%m-%Y"):
     
     """ 
     Newer version of get_model_stats, includes uncertainty analysis. Fits a given model, plots and saves projections.
@@ -336,10 +338,12 @@ def get_model_stats_v2(model, loss_fun, data, breakpoints,
     -------------
     model           : Callable function of the form f(t_max, *params) where params are the model parameters. Function should return predictions in an array.
     loss_fun        : Function of form f(x, y) which returns the loss between vectors x, y
-    data            : An array containing the daily death counts
+    data            : An array containing the smooth daily death counts
+    raw_data        : An array containing the raw daily death counts
     breakpoints     : An array of time values at which the data should be split into train/test sets. A plot is produced for each breakpoint
     plot_title      : The title of the set of plots. If left empty, nothing is plotted
-    filename        : The path where the predictions should be stored in JSON format. If unspecified, predictions are not stored.
+    start_date      : The starting date of the data
+    base_filename   : The base name of the projections CSV file. If left unspecified, files are not saved. 
     fixed_params    : A dictionary with string keys and float values mapping parameter names to their fixed values. 
     var_param_vals  : A dictionary with string keys and list values mapping variable parameter names to their possible values.  
     param_order     : A list of string names of parameters specifying the order in which they are passed into the model function
@@ -347,6 +351,7 @@ def get_model_stats_v2(model, loss_fun, data, breakpoints,
     future_preds    : The number of days into the future the model should predict deaths
     huge            : If this is True large plots are produced
     exclude_params  : List of params which should not be saved
+    date_format     : The format of the date which is appended to the projections filename
 
     Returns
     -------------
@@ -414,7 +419,6 @@ def get_model_stats_v2(model, loss_fun, data, breakpoints,
             
             all_preds.append((loss, preds, offset))
 
-
         # Get the uncertainty interval 
         min_preds = np.ones_like(best_preds) * np.inf
         max_preds = np.ones_like(best_preds) * -np.inf
@@ -438,20 +442,25 @@ def get_model_stats_v2(model, loss_fun, data, breakpoints,
             ax.set_ylabel("Deaths")
             ax.legend()
         
-        if filename is not None:
-            df_dict = {
-                "Breakpoint"  : [b],
-                "Train Loss"  : [min_loss],
-                "preds"       : [avg_preds],
-                "minpreds"    : [min_preds],
-                "maxpreds"    : [max_preds]
-            }
-        else:
-            df_dict = {
-                "Breakpoint"  : [b],
-                "Train Loss"  : [min_loss],
-                "preds"       : [avg_preds],
-            }
+        projections_df = pd.DataFrame.from_dict({
+            "date"      : [start_date + datetime.timedelta(days=i) for i in range(raw_data.shape[0])],
+            "raw"       : np.concatenate((raw_data, np.nan * np.ones(future_preds))),
+            "smooth"    : np.concatenate((data, np.nan * np.ones(future_preds))),
+            "minpreds"  : np.concatenate((np.nan * np.ones(offset), min_preds)),
+            "avgpreds"  : np.concatenate((np.nan * np.ones(offset), avg_preds)),
+            "maxpreds"  : np.concatenate((np.nan * np.ones(offset), max_preds))
+        })
+
+        if base_filename is not None:
+            # Append the date of the breakpoint to the filename
+            curr_date = start_date + datetime.timedelta(days=b)
+            projections_df.to_csv("projections/{}_{}.csv".format(base_filename, curr_date.strftime(date_format)))
+
+        df_dict = {
+            "Breakpoint"  : [b],
+            "Train Loss"  : [min_loss],
+            "preds"       : [avg_preds],
+        }
 
         for i, col in enumerate(param_order):
             if exclude_params is None or col not in exclude_params: 
@@ -463,14 +472,14 @@ def get_model_stats_v2(model, loss_fun, data, breakpoints,
         fig.tight_layout(pad=2.0)
         fig.suptitle(plot_title)
     
-    if filename is not None:
-        directory = os.path.dirname(filename)
-        Path(directory).mkdir(exist_ok=True, parents=True)
-        df.reset_index(inplace=True)
-        json_data = df.to_json()
+    # if filename is not None:
+    #     directory = os.path.dirname(filename)
+    #     Path(directory).mkdir(exist_ok=True, parents=True)
+    #     df.reset_index(inplace=True)
+    #     json_data = df.to_json()
 
-        with open(filename, "w") as f:
-            f.write(json_data)
+    #     with open(filename, "w") as f:
+    #         f.write(json_data)
 
     return df
 
