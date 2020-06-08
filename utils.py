@@ -443,7 +443,7 @@ def get_model_stats_v2(model, loss_fun, data, raw_data, breakpoints,
             ax.legend()
         
         projections_df = pd.DataFrame.from_dict({
-            "date"      : [start_date + datetime.timedelta(days=i) for i in range(raw_data.shape[0])],
+            "date"      : [start_date + datetime.timedelta(days=i) for i in range(raw_data.shape[0] + future_preds)],
             "raw"       : np.concatenate((raw_data, np.nan * np.ones(future_preds))),
             "smooth"    : np.concatenate((data, np.nan * np.ones(future_preds))),
             "minpreds"  : np.concatenate((np.nan * np.ones(offset), min_preds)),
